@@ -1,0 +1,93 @@
+system DevRig {
+
+    system_opts {
+        hostname = "pwr-dev";
+        timezone = "Europe/Warsaw";
+        locale = "en_US.UTF-8";
+        type = LINUX_ZEN;
+        headers = true;
+        backup_kernel = LINUX_LTS;
+        fstrim_timer = true;
+        microcode = INTEL;
+        cpufreq = TLP;
+        firewall = UFW;
+        // gpu = NVIDIA; // Opt-in for dedicated graphics, defaults to integrated (Mesa/Intel) if omitted
+    }
+
+    bootloader {
+        type = SYSTEMD_BOOT;
+    }
+
+    storage MainDisk on LARGEST_DRIVE {
+        scheme = GPT;
+
+        partition boot {
+            size = 1 GB;
+            fs = FAT32;
+            mount = "/boot";
+            flags = [EFI];
+        }
+
+        partition swap {
+            size = 4 GB;
+            fs = SWAP;
+        }
+
+        partition root {
+            size = REMAINING;
+            fs = EXT4;
+            mount = "/";
+        }
+    }
+
+    users {
+        root {
+            password_hash = hash("hunter2");
+        }
+
+        user "nero" {
+            groups = [WHEEL, DOCKER, KVM, AUDIO, VIDEO];
+            shell = BASH;
+            uid = 1000;
+        }
+    }
+
+    software {
+        manager = PACMAN;
+        aur_helper = YAY;
+        
+        paccache_timer = true;
+        parallel_downloads = true;
+        reflector_timer = true;
+        
+        packages = [
+            // Dev essentials
+            "base-devel", "git", "vim", "neovim", "bash",
+            
+            // C/C++ Dev Stack
+            "gcc", "clang", "cmake", "ninja", "gdb", "valgrind", "bear",
+            
+            // Networking / Utils
+            "networkmanager", "curl", "wget", "htop", "btop", "ripgrep", "fd",
+            
+            // i3 WM setup
+            "i3-wm", "i3status", "i3blocks", "lightdm", "lightdm-gtk-greeter", "dmenu", "alacritty"
+        ];
+        
+        aur_packages = [
+            "spotify"
+        ];
+    }
+
+    desktop {
+        env = I3;
+        display_manager = LIGHTDM;
+        base_fonts = true;
+        audio = PIPEWIRE;
+        bluetooth = true;
+    }
+
+    exec {
+        "systemctl enable NetworkManager"
+    }
+}
