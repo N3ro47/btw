@@ -30,7 +30,8 @@ CPUFREQ: 'cpufreq';
 FIREWALL: 'firewall';
 BACKUP_KERNEL: 'backup_kernel';
 GPU: 'gpu';
-ON: 'on';
+/*disk on*/
+ON: 'on'; 
 SCHEME: 'scheme';
 SIZE: 'size';
 FS: 'fs';

@@ -11,7 +11,7 @@ from src.grammar.build.ArchParser import ArchParser
 
 
 def compile_arch(filepath: str, output: str):
-    print(f"[*] Parsing {filepath}...")
+    print(f"[*] Phase 1: Parsing {filepath}...")
 
     input_stream = FileStream(filepath)
     lexer = ArchLexer(input_stream)
@@ -20,7 +20,7 @@ def compile_arch(filepath: str, output: str):
 
     tree = parser.program()
 
-    print("[*] Building AST...")
+    print("[*] Phase 1: Outlining AST Construction...")
     visitor = ASTVisitor()
     ast = visitor.visit(tree)
 
@@ -28,7 +28,7 @@ def compile_arch(filepath: str, output: str):
         print("[!] Failed to parse AST.")
         sys.exit(1)
 
-    print("[*] Running Semantic Analysis...")
+    print("[*] Phase 1: Running Outline Semantic Analysis...")
     analyzer = SemanticAnalyzer(ast)
     try:
         analyzer.analyze()
@@ -36,18 +36,18 @@ def compile_arch(filepath: str, output: str):
         print(f"[!] {e}")
         sys.exit(1)
 
-    print(f"[*] Generating Code to {output}...")
+    print(f"[*] Phase 1: Outlining Code Generation to {output}...")
     generator = CodeGenerator(ast)
     bash_script = generator.generate()
 
     with open(output, "w") as f:
         f.write(bash_script)
 
-    print(f"[+] Compilation successful! Output saved to '{output}'.")
+    print(f"[+] Phase 1 Architecture Compilation successful! Outline saved to '{output}'.")
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="ArchSpec Compiler")
+    parser = argparse.ArgumentParser(description="ArchSpec Compiler Outline")
     parser.add_argument("command", choices=["build"], help="Command to run")
     parser.add_argument("file", help="The .arch file to compile")
     parser.add_argument(
