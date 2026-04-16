@@ -4,7 +4,13 @@ from typing import List, Optional
 
 @dataclass
 class ASTNode:
-    pass
+    def set_location(self, line: int, column: int):
+        self.line = line
+        self.column = column
+        return self
+        self.line = line
+        self.column = column
+        return self
 
 
 # ---- Storage Nodes ----

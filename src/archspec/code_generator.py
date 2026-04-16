@@ -1,5 +1,8 @@
+import textwrap
 from .ast import SystemDecl
 
+def dedent(text: str) -> str:
+    return textwrap.dedent(text).strip()
 
 class CodeGenerator:
     def __init__(self, system: SystemDecl):
@@ -9,81 +12,73 @@ class CodeGenerator:
     def generate(self) -> str:
         self.script.append("#!/bin/bash")
         self.script.append("set -e")
-        self.script.append(f"# Generated Setup Script for ArchSpec: {self.system.name}")
-        self.script.append("")
+        self.script.append(f"# Generated Setup Script for ArchSpec: {self.system.name}\n")
 
-        self._gen_clock()
-        self._gen_storage()
-        self._gen_pacstrap()
-        self._gen_fstab()
-        self._gen_chroot()
+        self.script.append(self._gen_clock())
+        self.script.append(self._gen_storage())
+        self.script.append(self._gen_pacstrap())
+        self.script.append(self._gen_fstab())
+        self.script.append(self._gen_chroot())
 
-        return "\n".join(self.script)
+        return "\n\n".join(filter(None, self.script)) + "\n"
 
     def _gen_clock(self):
-        self.script.append("# 1. Update system clock")
-        self.script.append("timedatectl set-ntp true")
-        self.script.append("")
+        return dedent("""
+            # 1. Update system clock
+            timedatectl set-ntp true
+        """)
 
     def _gen_storage(self):
-        self.script.append("# 2. Partitioning Disk")
+        lines = ["# 2. Partitioning Disk"]
         for st in self.system.storage:
             dev = st.device
             if dev == "LARGEST_DRIVE":
-                self.script.append(
-                    "DRIVE=$(lsblk -b -d -o NAME,SIZE | tail -n+2 | sort -k2 -nr | head -n1 | awk '{print \"/dev/\"$1}')"
-                )
+                lines.append(dedent("""
+                    DRIVE=$(lsblk -b -d -o NAME,SIZE | tail -n+2 | sort -k2 -nr | head -n1 | awk '{print "/dev/"$1}')"""))
                 dev = "$DRIVE"
 
-            self.script.append(f'echo "Formatting {dev}..."')
+            lines.append(f'echo "Formatting {dev}..."')
+            lines.append(f"parted -s {dev} mklabel {st.scheme.lower()}")
 
-            # Simple wipedisk stub
-            self.script.append(f"parted -s {dev} mklabel {st.scheme.lower()}")
-
-            # Format and Mount
             part_prefix = f"{dev}p" if "nvme" in dev else f"{dev}"
             for idx, part in enumerate(st.partitions, start=1):
                 part_path = f"{part_prefix}{idx}"
                 if part.fs == "FAT32":
-                    self.script.append(f"mkfs.vfat -F32 {part_path}")
+                    lines.append(f"mkfs.vfat -F32 {part_path}")
                 elif part.fs == "EXT4":
-                    self.script.append(f"mkfs.ext4 -F {part_path}")
+                    lines.append(f"mkfs.ext4 -F {part_path}")
                 elif part.fs == "BTRFS":
-                    self.script.append(f"mkfs.btrfs -f {part_path}")
+                    lines.append(f"mkfs.btrfs -f {part_path}")
                 elif part.fs == "SWAP":
-                    self.script.append(f"mkswap {part_path}")
-                    self.script.append(f"swapon {part_path}")
+                    lines.append(f"mkswap {part_path}")
+                    lines.append(f"swapon {part_path}")
 
-            self.script.append("")
-
-            # Mounting phase
-            self.script.append("# 3. Mounting Partitions")
-            # Mount Root first
+            lines.append("\n# 3. Mounting Partitions")
             for idx, part in enumerate(st.partitions, start=1):
                 part_path = f"{part_prefix}{idx}"
                 if part.mount == "/":
                     if part.subvolumes:
-                        self.script.append(f"mount {part_path} /mnt")
+                        lines.append(dedent(f"""
+                            mount {part_path} /mnt
+                            """))
                         for subvol in part.subvolumes:
-                            self.script.append(f"btrfs subvolume create /mnt/{subvol}")
-                        self.script.append("umount /mnt")
-                        # Just an example simplified mount
-                        self.script.append(
-                            f"mount -o compress=zstd,subvol=@ {part_path} /mnt"
-                        )
+                            lines.append(f"btrfs subvolume create /mnt/{subvol}")
+                        lines.append(dedent(f"""
+                            umount /mnt
+                            mount -o compress=zstd,subvol=@ {part_path} /mnt
+                            """))
                     else:
-                        self.script.append(f"mount {part_path} /mnt")
+                        lines.append(f"mount {part_path} /mnt")
 
-            # Mount others
             for idx, part in enumerate(st.partitions, start=1):
                 part_path = f"{part_prefix}{idx}"
                 if part.mount and part.mount != "/":
-                    self.script.append(f"mkdir -p /mnt{part.mount}")
-                    self.script.append(f"mount {part_path} /mnt{part.mount}")
-            self.script.append("")
+                    lines.append(f"mkdir -p /mnt{part.mount}")
+                    lines.append(f"mount {part_path} /mnt{part.mount}")
+
+        return "\n".join(lines)
 
     def _gen_pacstrap(self):
-        self.script.append("# 4. Pacstrap Base Installation")
         pkgs = ["base", "linux", "linux-firmware"]
         if self.system.system_opts:
             pkgs[1] = self.system.system_opts.kernel_type.lower().replace("_", "-")
@@ -115,126 +110,144 @@ class CodeGenerator:
                 pkgs.extend(self.system.software.packages)
 
         if self.system.desktop:
-            # Smart GPU/Display Drivers Default to generic/Intel if not specified
-            if self.system.system_opts and self.system.system_opts.gpu == "NVIDIA":
+            if getattr(self.system.system_opts, 'gpu', None) == "NVIDIA":
                 pkgs.extend(["nvidia", "nvidia-utils", "egl-wayland", "mesa"])
-            elif self.system.system_opts and self.system.system_opts.gpu == "AMD":
+            elif getattr(self.system.system_opts, 'gpu', None)  == "AMD":
                 pkgs.extend(["vulkan-radeon", "xf86-video-amdgpu", "mesa"])
             else:
                 pkgs.extend(["vulkan-intel", "mesa"])
 
             if self.system.desktop.base_fonts:
                 pkgs.extend(["noto-fonts", "noto-fonts-emoji", "noto-fonts-cjk", "ttf-dejavu"])
-            if self.system.desktop.audio == "PIPEWIRE":
+            if getattr(self.system.desktop, 'audio', None) == "PIPEWIRE":
                 pkgs.extend(["pipewire", "pipewire-pulse", "pipewire-audio", "pipewire-alsa", "pipewire-jack", "wireplumber"])
-            elif self.system.desktop.audio == "PULSEAUDIO":
+            elif getattr(self.system.desktop, 'audio', None) == "PULSEAUDIO":
                 pkgs.extend(["pulseaudio", "pulseaudio-alsa", "pulseaudio-bluetooth"])
-            if self.system.desktop.bluetooth:
+            if getattr(self.system.desktop, 'bluetooth', False):
                 pkgs.extend(["bluez", "bluez-utils"])
 
-        self.script.append(f"pacstrap -K /mnt {' '.join(pkgs)}")
-        self.script.append("")
+        return dedent(f"""
+            # 4. Pacstrap Base Installation
+            pacstrap -K /mnt {' '.join(pkgs)}
+        """)
 
     def _gen_fstab(self):
-        self.script.append("# 5. Generate Fstab")
-        self.script.append("genfstab -U /mnt >> /mnt/etc/fstab")
-        self.script.append("")
+        return dedent("""
+            # 5. Generate Fstab
+            genfstab -U /mnt >> /mnt/etc/fstab
+        """)
 
     def _gen_chroot(self):
-        self.script.append("# 6. Chroot configurations")
+        lines = ["# 6. Chroot configurations", ""]
         chroot_cmd = "arch-chroot /mnt"
 
-        # System Opts
-        if self.system.system_opts:
-            if self.system.system_opts.timezone:
-                tz = self.system.system_opts.timezone
-                self.script.append(
-                    f"{chroot_cmd} ln -sf /usr/share/zoneinfo/{tz} /etc/localtime"
-                )
-                self.script.append(f"{chroot_cmd} hwclock --systohc")
-            if self.system.system_opts.locale:
-                loc = self.system.system_opts.locale
-                self.script.append(
-                    f"{chroot_cmd} sed -i 's/^#{loc}/{loc}/' /etc/locale.gen"
-                )
-                self.script.append(f"{chroot_cmd} locale-gen")
-                self.script.append(
-                    f"echo 'LANG={loc.split()[0]}' > /mnt/etc/locale.conf"
-                )
-            if self.system.system_opts.hostname:
-                host = self.system.system_opts.hostname
-                self.script.append(f"echo '{host}' > /mnt/etc/hostname")
+        lines.append(self._gen_chroot_opts(chroot_cmd))
+        lines.append(self._gen_chroot_users(chroot_cmd))
+        lines.append(self._gen_chroot_bootloader(chroot_cmd))
+        lines.append(self._gen_chroot_desktop_hooks(chroot_cmd))
+        lines.append(self._gen_chroot_execs(chroot_cmd))
 
-        # Users
+        return "\n".join(filter(None, lines))
+
+    def _gen_chroot_opts(self, chroot_cmd: str):
+        lines = []
+        if self.system.system_opts:
+            opts = self.system.system_opts
+            if getattr(opts, 'timezone', None):
+                lines.append(f"{chroot_cmd} ln -sf /usr/share/zoneinfo/{opts.timezone} /etc/localtime")
+                lines.append(f"{chroot_cmd} hwclock --systohc")
+            if getattr(opts, 'locale', None):
+                lines.append(f"{chroot_cmd} sed -i 's/^#{opts.locale}/{opts.locale}/' /etc/locale.gen")
+                lines.append(f"{chroot_cmd} locale-gen")
+                lines.append(f"echo 'LANG={opts.locale.split()[0]}' > /mnt/etc/locale.conf")
+            if getattr(opts, 'hostname', None):
+                lines.append(f"echo '{opts.hostname}' > /mnt/etc/hostname")
+        return "\n".join(lines)
+
+    def _gen_chroot_users(self, chroot_cmd: str):
+        lines = []
         for user in self.system.users:
             if user.is_root:
-                if user.password_hash:
-                    self.script.append(
-                        f"echo 'root:{user.password_hash}' | {chroot_cmd} chpasswd -e"
-                    )
+                if getattr(user, 'password_hash', None):
+                    lines.append(f"echo 'root:{user.password_hash}' | {chroot_cmd} chpasswd -e")
             else:
-                groups_arg = ""
-                if user.groups:
-                    groups_arg = f"-G {','.join(user.groups).lower()}"
-                shell_arg = f"-s /bin/{user.shell.lower()}" if user.shell else ""
-                self.script.append(
-                    f"{chroot_cmd} useradd -m {groups_arg} {shell_arg} {user.name}"
-                )
-                if user.password_hash:
-                    self.script.append(
-                        f"echo '{user.name}:{user.password_hash}' | {chroot_cmd} chpasswd -e"
-                    )
+                groups_arg = f"-G {','.join(user.groups).lower()}" if getattr(user, 'groups', None) else ""
+                shell_arg = f"-s /bin/{user.shell.lower()}" if getattr(user, 'shell', None) else ""
+                lines.append(f"{chroot_cmd} useradd -m {groups_arg} {shell_arg} {user.name}")
+                if getattr(user, 'password_hash', None):
+                    lines.append(f"echo '{user.name}:{user.password_hash}' | {chroot_cmd} chpasswd -e")
+        return "\n".join(lines)
 
-        # Bootloader
-        if self.system.bootloader:
-            if self.system.bootloader.type == "SYSTEMD_BOOT":
-                self.script.append(f"{chroot_cmd} bootctl install")
-            elif self.system.bootloader.type == "GRUB":
-                self.script.append(
-                    f"{chroot_cmd} grub-install --target=x86_64-efi --efi-directory=/boot --bootloader-id=GRUB"
-                )
-                self.script.append(f"{chroot_cmd} grub-mkconfig -o /boot/grub/grub.cfg")
+    def _gen_chroot_bootloader(self, chroot_cmd: str):
+        if not self.system.bootloader:
+            return ""
+        if self.system.bootloader.type == "SYSTEMD_BOOT":
+            return f"{chroot_cmd} bootctl install"
+        elif self.system.bootloader.type == "GRUB":
+            return dedent(f"""
+                {chroot_cmd} grub-install --target=x86_64-efi --efi-directory=/boot --bootloader-id=GRUB
+                {chroot_cmd} grub-mkconfig -o /boot/grub/grub.cfg
+            """)
+        return ""
 
-        # Desktop
+    def _gen_chroot_desktop_hooks(self, chroot_cmd: str):
+        lines = []
         if self.system.desktop:
-            if self.system.desktop.display_manager:
-                self.script.append(
-                    f"{chroot_cmd} systemctl enable {self.system.desktop.display_manager.lower()}"
-                )
-            if self.system.desktop.bluetooth:
-                self.script.append(f"{chroot_cmd} systemctl enable bluetooth")
+            if getattr(self.system.desktop, 'display_manager', None):
+                lines.append(f"{chroot_cmd} systemctl enable {self.system.desktop.display_manager.lower()}")
+            if getattr(self.system.desktop, 'bluetooth', False):
+                lines.append(f"{chroot_cmd} systemctl enable bluetooth")
 
-        # System Opts hooks
-        if self.system.system_opts:
-            if self.system.system_opts.fstrim_timer:
-                self.script.append(f"{chroot_cmd} systemctl enable fstrim.timer")
-            if self.system.system_opts.firewall:
-                self.script.append(f"{chroot_cmd} systemctl enable {self.system.system_opts.firewall.lower()}")
-            if self.system.system_opts.cpufreq:
-                if self.system.system_opts.cpufreq == "POWER_PROFILES_DAEMON":
-                    self.script.append(f"{chroot_cmd} systemctl enable power-profiles-daemon")
-                elif self.system.system_opts.cpufreq == "TLP":
-                    self.script.append(f"{chroot_cmd} systemctl enable tlp")
-                elif self.system.system_opts.cpufreq == "AUTOCPU_FREQ":
-                    self.script.append(f"{chroot_cmd} systemctl enable auto-cpufreq")
-            if self.system.system_opts.gpu == "NVIDIA":
-                self.script.append(f"{chroot_cmd} mkdir -p /etc/pacman.d/hooks")
-                self.script.append(f"cat << 'EOF' | {chroot_cmd} tee /etc/pacman.d/hooks/nvidia.hook > /dev/null\n[Trigger]\nOperation=Install\nOperation=Upgrade\nOperation=Remove\nType=Package\nTarget=nvidia\nTarget=linux\n[Action]\nDescription=Update NVIDIA module in initcpio\nDepends=mkinitcpio\nWhen=PostTransaction\nNeedsTargets\nExec=/bin/sh -c 'while read -r trg; do case $trg in linux*) exit 0; esac; done; /usr/bin/mkinitcpio -P'\nEOF")
+        if getattr(self.system, 'system_opts', None):
+            opts = self.system.system_opts
+            if getattr(opts, 'fstrim_timer', False):
+                lines.append(f"{chroot_cmd} systemctl enable fstrim.timer")
+            if getattr(opts, 'firewall', None):
+                lines.append(f"{chroot_cmd} systemctl enable {opts.firewall.lower()}")
+            if getattr(opts, 'cpufreq', None):
+                cf = opts.cpufreq
+                if cf == "POWER_PROFILES_DAEMON":
+                    lines.append(f"{chroot_cmd} systemctl enable power-profiles-daemon")
+                elif cf == "TLP":
+                    lines.append(f"{chroot_cmd} systemctl enable tlp")
+                elif cf == "AUTOCPU_FREQ":
+                    lines.append(f"{chroot_cmd} systemctl enable auto-cpufreq")
+            if getattr(opts, 'gpu', None) == "NVIDIA":
+                lines.append(dedent(f"""
+                    {chroot_cmd} mkdir -p /etc/pacman.d/hooks
+                    cat << 'EOF' | {chroot_cmd} tee /etc/pacman.d/hooks/nvidia.hook > /dev/null
+                    [Trigger]
+                    Operation=Install
+                    Operation=Upgrade
+                    Operation=Remove
+                    Type=Package
+                    Target=nvidia
+                    Target=linux
+                    [Action]
+                    Description=Update NVIDIA module in initcpio
+                    Depends=mkinitcpio
+                    When=PostTransaction
+                    NeedsTargets
+                    Exec=/bin/sh -c 'while read -r trg; do case $trg in linux*) exit 0; esac; done; /usr/bin/mkinitcpio -P'
+                    EOF"""))
 
-        # Software Hooks
         if self.system.software:
-            if self.system.software.paccache_timer:
-                self.script.append(f"{chroot_cmd} systemctl enable paccache.timer")
-            if self.system.software.reflector_timer:
-                self.script.append(f"{chroot_cmd} systemctl enable reflector.timer")
-            if self.system.software.parallel_downloads:
-                self.script.append(f"{chroot_cmd} sed -i 's/^#ParallelDownloads/ParallelDownloads/' /etc/pacman.conf")
+            sw = self.system.software
+            if getattr(sw, 'paccache_timer', False):
+                lines.append(f"{chroot_cmd} systemctl enable paccache.timer")
+            if getattr(sw, 'reflector_timer', False):
+                lines.append(f"{chroot_cmd} systemctl enable reflector.timer")
+            if getattr(sw, 'parallel_downloads', False):
+                lines.append(f"{chroot_cmd} sed -i 's/^#ParallelDownloads/ParallelDownloads/' /etc/pacman.conf")
+        return "\n".join(lines)
 
-        # Execs
-        if self.system.execs:
-            self.script.append("# Custom Exec hooks")
+    def _gen_chroot_execs(self, chroot_cmd: str):
+        lines = []
+        if getattr(self.system, 'execs', None):
+            lines.append("# Custom Exec hooks")
             for execute in self.system.execs:
-                # Evaluate script block in chroot
-                self.script.append(
-                    f"cat << 'EOF' | {chroot_cmd} bash\n{execute.command}\nEOF"
-                )
+                lines.append(dedent(f"""
+                    cat << 'EOF' | {chroot_cmd} bash
+                    {execute.command}
+                    EOF"""))
+        return "\n".join(lines)

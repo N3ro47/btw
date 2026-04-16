@@ -1,5 +1,6 @@
 from src.grammar.build.ArchParser import ArchParser
 from src.grammar.build.ArchParserVisitor import ArchParserVisitor
+from antlr4.error.ErrorListener import ErrorListener
 
 from .ast import (
     Bootloader,
@@ -13,6 +14,16 @@ from .ast import (
     SystemOpts,
     User,
 )
+
+
+class CompilerErrorListener(ErrorListener):
+    def __init__(self):
+        super().__init__()
+        self.errors = []
+
+    def syntaxError(self, recognizer, offendingSymbol, line, column, msg, e):
+        self.errors.append((line, column, msg))
+
 
 
 class ASTVisitor(ArchParserVisitor):
@@ -30,7 +41,7 @@ class ASTVisitor(ArchParserVisitor):
         if ctx.EXTENDS():
             extends_id = ctx.ID(1).getText()
 
-        self.system = SystemDecl(name=sys_name, extends=extends_id)
+        self.system = SystemDecl(name=sys_name, extends=extends_id).set_location(ctx.start.line, ctx.start.column)
 
         # Visit all sub-blocks
         for block in ctx.block():
@@ -44,11 +55,11 @@ class ASTVisitor(ArchParserVisitor):
             if param.TYPE():
                 bt_type = param.getChild(2).getText()
 
-        self.system.bootloader = Bootloader(type=bt_type)
+        self.system.bootloader = Bootloader(type=bt_type).set_location(ctx.start.line, ctx.start.column)
         return self.system.bootloader
 
     def visitSystemOptsBlock(self, ctx: ArchParser.SystemOptsBlockContext):
-        opts = SystemOpts()
+        opts = SystemOpts().set_location(ctx.start.line, ctx.start.column)
         for param in ctx.systemOptsParam():
             if param.HOSTNAME():
                 opts.hostname = param.STRING().getText().strip('"')
@@ -86,7 +97,7 @@ class ASTVisitor(ArchParserVisitor):
         elif ctx.SMALLEST_DRIVE():
             device_str = "SMALLEST_DRIVE"
 
-        st = Storage(name=st_name, device=device_str)
+        st = Storage(name=st_name, device=device_str).set_location(ctx.start.line, ctx.start.column)
 
         for param in ctx.storageParam():
             if param.SCHEME():
@@ -104,7 +115,7 @@ class ASTVisitor(ArchParserVisitor):
         else:
             p_name = ctx.ID().getText()
 
-        part = Partition(name=p_name, size="0")
+        part = Partition(name=p_name, size="0").set_location(ctx.start.line, ctx.start.column)
 
         for param in ctx.partitionParam():
             if param.SIZE():
@@ -134,13 +145,13 @@ class ASTVisitor(ArchParserVisitor):
                 self.visitNormalUserDecl(user_decl.normalUserDecl())
 
     def visitRootDecl(self, ctx: ArchParser.RootDeclContext):
-        user = User(name="root", is_root=True)
+        user = User(name="root", is_root=True).set_location(ctx.start.line, ctx.start.column)
         self._populate_user_params(user, ctx.userParam())
         self.system.users.append(user)
 
     def visitNormalUserDecl(self, ctx: ArchParser.NormalUserDeclContext):
         username = ctx.STRING().getText().strip('"')
-        user = User(name=username, is_root=False)
+        user = User(name=username, is_root=False).set_location(ctx.start.line, ctx.start.column)
         self._populate_user_params(user, ctx.userParam())
         self.system.users.append(user)
 
@@ -158,7 +169,7 @@ class ASTVisitor(ArchParserVisitor):
                 user.uid = int(param.TYPE_INT().getText())
 
     def visitSoftwareBlock(self, ctx: ArchParser.SoftwareBlockContext):
-        sw = Software()
+        sw = Software().set_location(ctx.start.line, ctx.start.column)
         for param in ctx.softwareParam():
             if param.MANAGER():
                 sw.manager = param.getChild(2).getText()
@@ -183,7 +194,7 @@ class ASTVisitor(ArchParserVisitor):
         return sw
 
     def visitDesktopBlock(self, ctx: ArchParser.DesktopBlockContext):
-        desk = Desktop()
+        desk = Desktop().set_location(ctx.start.line, ctx.start.column)
         for param in ctx.desktopParam():
             if param.ENV():
                 desk.env = param.ID().getText()
@@ -202,8 +213,8 @@ class ASTVisitor(ArchParserVisitor):
     def visitLinkBlock(self, ctx: ArchParser.LinkBlockContext):
         src = ctx.STRING(0).getText().strip('"')
         tgt = ctx.STRING(1).getText().strip('"')
-        self.system.links.append(Link(source=src, target=tgt))
+        self.system.links.append(Link(source=src, target=tgt).set_location(ctx.start.line, ctx.start.column))
 
     def visitExecBlock(self, ctx: ArchParser.ExecBlockContext):
         bash_cmd = ctx.STRING().getText().strip('"')
-        self.system.execs.append(Exec(command=bash_cmd))
+        self.system.execs.append(Exec(command=bash_cmd).set_location(ctx.start.line, ctx.start.column))

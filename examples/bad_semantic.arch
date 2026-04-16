@@ -1,0 +1,19 @@
+system dev_rig {
+    storage nvme on "/dev/nvme0n1" {
+        scheme = GPT;
+        partition root {
+            size = 50GB;
+            fs = EXT4;
+            mount = "/boot";
+            subvolumes = ["home"];
+        }
+    }
+    users {
+        user "nero" {
+            uid = 1000;
+        }
+        user "nero" {
+            uid = 1001;
+        }
+    }
+}
